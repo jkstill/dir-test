@@ -1,0 +1,42 @@
+
+used mtf.pl to create 500k files with a range of timestamps
+
+timing to read through files in dir
+
+[jkstill@lestrade dir_test]$ time getdents/getdents audit|wc
+ 504905 2522074 32116988
+
+real    0m0.623s
+user    0m0.462s
+sys     0m0.347s
+
+This is very fast, and may work well do just do a stat on each file
+have yet to test that.
+
+=====================================================================
+
+use find - this reads all dir entries - very slow
+
+[jkstill@lestrade dir_test]$ time find audit -mtime +30 | wc 
+ 312451  312451 8436177
+
+real    3m20.588s
+user    0m0.307s
+sys     0m3.397s
+
+=====================================================================
+
+used getdents_terse and used stat in a loop
+
+Takes far too long to be useful
+
+[jkstill@lestrade dir_test]$ time ./gtest.sh  | wc
+ 500001  500001 5500011
+
+real    31m52.873s
+user    1m25.570s
+sys     24m42.810s
+
+=====================================================================
+
+

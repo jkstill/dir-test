@@ -1,0 +1,307 @@
+
+A client has an audit directory with 4.5 million files - this directory
+needs to be cleaned up.  Here I am testing a couple methods to do that.
+
+An audit file is created about every 14 seconds on average.
+
+The files go back ~ 24 months.
+
+
+seconds = 24 * 30 * 24 * 60 * 60
+62208000 / number of files
+
+interval = seconds / files
+13.8 = 62208000 / 4500000
+
+
+Std utilities cannot be used to do this in a straightforward
+manner, as the command line arg list is limited to 128k bytes
+by the system limit ARG_MAX.
+
+[root@lestrade u02]# grep "ARG_MAX" /usr/include/linux/limits.h
+#define ARG_MAX       131072    /* # bytes of args + environ for exec() */
+
+There are three things that need to be accomplished. 
+
+
+###########################################################
+1) archive audit files < 1 year old to some other location
+###########################################################
+
+possibilities:
+
+rsync to archive and remove files < 1 year old.
+
+find pipelined to xargs mv
+
+eg. find audit_old -mtime -366 -name "+asm_ora_*.aud" | xargs --no-run-if-empty rm
+
+
+###########################################################
+2) remove remaining audit files.
+###########################################################
+
+find audit_old -mtime -366 -name "+asm_ora_*.aud" | xargs --no-run-if-empty rm
+
+
+###########################################################
+3) remove the audit_old directory - the entry size is 400m!
+###########################################################
+
+
+##########################################################
+
+generate files to work with
+
+jkstill]$ mkdir audit_old
+
+use mtf.pl to create 1m files
+each file will be 14 seconds older than the previous one
+
+creating 1,000,000 empty files up to 6 months old
+
+[jkstill@lestrade dir_test]$ time ./mtf.pl
+oldest file created: 2011-6-11 12:13:16
+
+real    0m27.173s
+user    0m3.599s
+sys     0m17.040s
+
+ls should not work on this directory:
+
+oops, surprisingly it does work for 1m files - not expecting that
+
+[jkstill@lestrade dir_test]$ ls audit_old|wc
+1000001 1000001 20888912
+
+OK, we really need 3m files anyway to test this - ~18 months worth
+
+[jkstill@lestrade dir_test]$ time ./mtf.pl
+oldest file created: 2010-7-21 10:30:25
+
+real    9m52.908s
+user    0m10.753s
+sys     0m42.745s
+
+
+The time to create 1m files was 27 seconds.
+
+The time to create 3m files was 10 minutes.
+
+This would be interesting to research a bit more - at
+what point does the inode chaining begin to take so
+much time?  Where is the knee in the curve?
+
+The time to create a single file is much greater in
+this inflated directory than in a nearly empty one.
+
+[jkstill@lestrade dir_test]$ time touch audit_old/x
+
+real    0m0.031s
+user    0m0.001s
+sys     0m0.002s
+[jkstill@lestrade dir_test]$ time touch x
+
+real    0m0.002s
+user    0m0.000s
+sys     0m0.002s
+
+A 15x increase in the time required to create the file.
+
+Now we have 3m files to work with for testing.
+
+Dir size is now 130m
+
+[jkstill@lestrade dir_test]$ ls -l
+total 129864
+drwxr-xr-x 2 jkstill dba 132833280 Dec 20 12:23 audit_old
+-rw-r--r-- 1 jkstill dba      2910 Dec 20 12:29 dir_test.txt
+-rwxr--r-- 1 jkstill dba      1148 Dec 20 12:28 mtf.pl
+drwxr-xr-x 2 jkstill dba      4096 Dec 20 12:29 RCS
+-rw-r--r-- 1 jkstill dba         0 Dec 20 12:23 x
+
+
+############################################################
+############################################################
+############################################################
+
+move files < 1 year old
+
+By using rsync we can just change the destination and use
+the same commands, regardless of whether it is a local directory
+or another server.
+
+#########################
+### rsync command test
+#########################
+
+## create two directories, src and dest, with files in src
+
+[jkstill@lestrade dir_test]$ bash -v ./rsync_test_setup.sh
+#!/bin/sh
+
+rm -rf rsync_test_src rsync_test_dest
+mkdir -p rsync_test_src rsync_test_dest
+
+for f in a b c d e f
+do
+        touch rsync_test_src/$f
+done
+
+
+ls -l rsync_test_src rsync_test_dest
+rsync_test_dest:
+total 0
+
+rsync_test_src:
+total 0
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 a
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 b
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 c
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 d
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 e
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 f
+
+###############################################################
+## sync files to new remote location, removing the source files
+###############################################################
+
+[jkstill@lestrade dir_test]$ bash -v ./rsync_test.sh
+#!/bin/sh
+
+SRC=rsync_test_src/
+
+# local dest
+#DEST=rsync_test_dest
+
+# remote dest
+DEST='jkstill@lestrade:/u02/dir_test/rsync_test_dest'
+
+echo '### BEFORE'
+### BEFORE
+
+ls -l rsync_test_src rsync_test_dest
+rsync_test_dest:
+total 0
+
+rsync_test_src:
+total 0
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 a
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 b
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 c
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 d
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 e
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:18 f
+rsync --recursive --remove-sent-files $SRC $DEST
+#rsync  -vv --recursive --remove-sent-files --dry-run $SRC $DEST
+
+echo '### AFTER'
+### AFTER
+
+ls -l rsync_test_src rsync_test_dest
+rsync_test_dest:
+total 0
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:19 a
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:19 b
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:19 c
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:19 d
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:19 e
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:19 f
+
+rsync_test_src:
+total 0
+
+
+###############################################################
+## sync files to new local location, removing the source files
+###############################################################
+
+[jkstill@lestrade dir_test]$ bash -v ./rsync_test.sh
+#!/bin/sh
+
+SRC=rsync_test_src/
+
+# local dest
+DEST=rsync_test_dest
+
+# remote dest
+#DEST='jkstill@lestrade:/u02/dir_test/rsync_test_dest'
+
+echo '### BEFORE'
+### BEFORE
+
+ls -l rsync_test_src rsync_test_dest
+rsync_test_dest:
+total 0
+
+rsync_test_src:
+total 0
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 a
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 b
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 c
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 d
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 e
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 f
+rsync --recursive --remove-sent-files $SRC $DEST
+#rsync  -vv --recursive --remove-sent-files --dry-run $SRC $DEST
+
+echo '### AFTER'
+### AFTER
+
+ls -l rsync_test_src rsync_test_dest
+rsync_test_dest:
+total 0
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 a
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 b
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 c
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 d
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 e
+-rw-r--r-- 1 jkstill dba 0 Dec 20 13:21 f
+
+rsync_test_src:
+total 0
+
+
+######################################################
+######################################################
+######################################################
+
+### scripts to move audit_old files to new location
+### remove audit files GT 1 year old
+### use rsync to move remove remaining files
+
+############# cleanup completed
+
+The cleanup job was interrupted after deleting all files
+older than 365 days, and moving 1.5 mill of them
+
+The delete should have been about .5 million files, so
+the following timing is for moving that last .5 million files.
+
+[jkstill@lestrade dir_test]$ ./asm_audit_cleanup.sh
+SRC: audit_old/
+DEST: /u04/dir_test/audit_archive
+DAYS_TO_KEEP: 365
+
+# all old files already deleted - nothing to do
+## Date Tue Dec 20 14:34:02 PST 2011
+
+# about 20 minutes to move .5 million files
+## Date Tue Dec 20 14:36:44 PST 2011
+## Date Tue Dec 20 14:45:35 PST 2011
+
+On the test server it takes about 1 hour to move the 
+remaining 2 million files after the delete completes
+
+The test server storage is a pair of RAID 1 drives.
+
+10k Seagate Barracuda drives.
+
+
+[jkstill@lestrade dir_test]$ ls -ld audit_old
+drwxr-xr-x 2 jkstill dba 132833280 Dec 20 14:45 audit_old
+
+[jkstill@lestrade dir_test]$ rmdir audit_old
+
+
+
